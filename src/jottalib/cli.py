@@ -52,7 +52,6 @@ try:
 except ImportError:
     pass
 
-
 if sys.platform =='win32':
     ProgressBar = partial(progress.Bar)
 else:
