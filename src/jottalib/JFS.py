@@ -26,19 +26,20 @@ from jottalib import __version__
 import sys, os, os.path, time
 import posixpath, logging, datetime, hashlib
 from collections import namedtuple
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
+import six
+from six.moves import cStringIO as StringIO
 
 # importing external dependencies (pip these, please!)
 import requests
+from requests.utils import quote
 import netrc
 import requests_toolbelt
 import certifi
 
 import lxml, lxml.objectify
 import dateutil, dateutil.parser # pip install python-dateutil
+
+log = logging.getLogger(__name__)
 
 #monkeypatch urllib3 param function to bypass bug in jottacloud servers
 from requests.packages import urllib3
@@ -48,9 +49,13 @@ def mp(name, value):
 urllib3.fields.format_header_param = mp
 
 # some setup
-JFS_ROOT='https://www.jotta.no/jfs/'
+JFS_ROOT='https://www.jottacloud.com/jfs/'
 
 # helper functions
+try:
+    unicode("we are python2")
+except NameError:
+    def unicode(s): return str(s) # TODO: use six
 
 def get_auth_info():
     """ Get authentication details to jottacloud.
@@ -204,7 +209,7 @@ class JFSFolder(object):
 
     def sync(self):
         'Update state of folder from Jottacloud server'
-        logging.info("syncing %s" % self.path)
+        log.info("syncing %s" % self.path)
         self.folder = self.jfs.get(self.path)
         self.synced = True
 
@@ -216,9 +221,17 @@ class JFSFolder(object):
         if not self.synced:
             self.sync()
         try:
-            return [JFSFile(f, self.jfs, self.path) for f in self.folder.files.iterchildren()]
+            #return [JFSFile(f, self.jfs, self.path) for f in self.folder.files.iterchildren()]
+            for _f in self.folder.files.iterchildren():
+                if hasattr(_f, 'currentRevision'): # a normal file
+                    yield JFSFile(_f, self.jfs, self.path)
+                else:
+                    yield JFSIncompleteFile(_f, self.jfs, self.path)
+
         except AttributeError:
-            return [x for x in []]
+            while False:
+                yield None
+            #return [x for x in []]
 
     def folders(self):
         if not self.synced:
@@ -238,9 +251,9 @@ class JFSFolder(object):
     def restore(self):
         'Restore the folder'
         if not self.deleted:
-            raise JFSError('Tried to restore a not deleted file')
+            raise JFSError('Tried to restore a not deleted folder')
         url = 'https://www.jottacloud.com/rest/webrest/%s/action/restore' % self.jfs.username
-        data = {'paths[]': self.path.replace(u'https://www.jotta.no/jfs', ''),
+        data = {'paths[]': self.path.replace(JFS_ROOT, ''),
                 'web': 'true',
                 'ts': int(time.time()),
                 'authToken': 0}
@@ -257,7 +270,7 @@ class JFSFolder(object):
     def hard_delete(self):
         'Deletes without possibility to restore'
         url = 'https://www.jottacloud.com/rest/webrest/%s/action/delete' % self.jfs.username
-        data = {'paths[]': self.path.replace(u'https://www.jotta.no/jfs', ''),
+        data = {'paths[]': self.path.replace(JFS_ROOT, ''),
                 'web': 'true',
                 'ts': int(time.time()),
                 'authToken': 0}
@@ -279,7 +292,7 @@ class JFSFolder(object):
             fileobj_or_path = open(fileobj_or_path, 'rb')
         elif filename is None: # fileobj is file, but filename is None
             filename = os.path.basename(fileobj_or_path.name)
-        logging.debug('.up %s ->  %s %s', repr(fileobj_or_path), repr(self.path), repr(filename))
+        log.debug('.up %s ->  %s %s', repr(fileobj_or_path), repr(self.path), repr(filename))
         r = self.jfs.up(posixpath.join(self.path, filename), fileobj_or_path,
             upload_callback=upload_callback)
         self.sync()
@@ -360,7 +373,7 @@ class JFSIncompleteFile(ProtoFile):
         md5 = calculate_md5(data)
         if md5 != self.md5:
             raise JFSError('''MD5 hashes don't match! Are you trying to resume with the wrong file?''')
-        logging.debug('Resuming %s from offset %s', self.path, self.size)
+        log.debug('Resuming %s from offset %s', self.path, self.size)
         return self.jfs.up(self.path, data, resume_offset=self.size)
 
     @property
@@ -397,8 +410,14 @@ class JFSIncompleteFile(ProtoFile):
 
     @property
     def size(self):
-        'return int'
-        return int(self.f.latestRevision.size)
+        """Bytes uploaded of the file so far.
+
+        Note that we only have the file size if the file was requested directly,
+        not if it's part of a folder listing.
+        """
+        if hasattr(self.f.latestRevision, 'size'):
+            return int(self.f.latestRevision.size)
+        return None
 
 class JFSFile(JFSIncompleteFile):
     'OO interface to a file, for convenient access. Type less, do more.'
@@ -471,7 +490,7 @@ class JFSFile(JFSIncompleteFile):
     def share(self):
         'Enable public access at secret, share only uri, and return that uri'
         url = 'https://www.jottacloud.com/rest/webrest/%s/action/enableSharing' % self.jfs.username
-        data = {'paths[]':self.path.replace(u'https://www.jotta.no/jfs', ''),
+        data = {'paths[]':self.path.replace(JFS_ROOT, ''),
                 'web':'true',
                 'ts':int(time.time()),
                 'authToken':0}
@@ -483,7 +502,7 @@ class JFSFile(JFSIncompleteFile):
         if not self.deleted:
             raise JFSError('Tried to restore a not deleted file')
         url = 'https://www.jottacloud.com/rest/webrest/%s/action/restore' % self.jfs.username
-        data = {'paths[]': self.path.replace(u'https://www.jotta.no/jfs', ''),
+        data = {'paths[]': self.path.replace(JFS_ROOT, ''),
                 'web': 'true',
                 'ts': int(time.time()),
                 'authToken': 0}
@@ -493,7 +512,7 @@ class JFSFile(JFSIncompleteFile):
     def hard_delete(self):
         'Deletes without possibility to restore'
         url = 'https://www.jottacloud.com/rest/webrest/%s/action/delete' % self.jfs.username
-        data = {'paths[]': self.path.replace(u'https://www.jotta.no/jfs', ''),
+        data = {'paths[]': self.path.replace(JFS_ROOT, ''),
                 'web': 'true',
                 'ts': int(time.time()),
                 'authToken': 0}
@@ -651,7 +670,7 @@ class JFSDevice(object):
         """Get _all_ metadata for this device.
         Call this method if you have the lite/abbreviated device info from e.g. <user/>. """
         if isinstance(path, object) and hasattr(path, 'name'):
-            logging.debug("passed an object, use .'name' as path value")
+            log.debug("passed an object, use .'name' as path value")
             # passed an object, use .'name' as path value
             path = '/%s' % path.name
         c = self._jfs.get('%s%s' % (self.path, path or '/'))
@@ -668,7 +687,7 @@ class JFSDevice(object):
         """Get an iterator of JFSFile() from the given mountPoint.
 
         "mountPoint" may be either an actual mountPoint element from JFSDevice.mountPoints{} or its .name. """
-        if isinstance(mountPoint, basestring):
+        if isinstance(mountPoint, six.string_types):
             # shortcut: pass a mountpoint name
             mountPoint = self.mountPoints[mountPoint]
         try:
@@ -681,7 +700,7 @@ class JFSDevice(object):
         """Get an iterator of JFSFolder() from the given mountPoint.
 
         "mountPoint" may be either an actual mountPoint element from JFSDevice.mountPoints{} or its .name. """
-        if isinstance(mountPoint, basestring):
+        if isinstance(mountPoint, six.string_types):
             # shortcut: pass a mountpoint name
             mountPoint = self.mountPoints[mountPoint]
         try:
@@ -689,6 +708,12 @@ class JFSDevice(object):
         except AttributeError as err:
             # no files at all
             return [x for x in []]
+
+    def new_mountpoint(self, name):
+        """Create a new mountpoint"""
+        url = '%s' % posixpath.join(self.path, name)
+        r = self._jfs.post(url, extra_headers={'content-type': 'application/x-www-form-urlencoded'})
+        return r
 
     @property
     def modified(self):
@@ -764,12 +789,36 @@ class JFS(object):
         self.rootpath = JFS_ROOT + self.username
         self.fs = self.get(self.rootpath)
 
+    def escapeUrl(self, url):
+        separators = [
+            '?dl=true',
+            '?mkDir=true',
+            '?dlDir=true',
+            '?mvDir=',
+            '?mv=',
+            '?mode=list',
+            '?mode=bin',
+            '?mode=thumb&ts='
+        ]
+        separator = separators[0]
+        for sep in separators:
+            if sep in url:
+                separator = sep
+                break
+
+        urlparts = url.rsplit(separator, 1)
+        if(len(urlparts) == 2):
+            url = quote(urlparts[0], safe=self.rootpath) + separator + urlparts[1]
+        else:
+            url = quote(urlparts[0], safe=self.rootpath)
+        return url
+
     def request(self, url, extra_headers=None):
         'Make a GET request for url, with or without caching'
         if not url.startswith('http'):
             # relative url
             url = self.rootpath + url
-        logging.debug("getting url: %s, extra_headers=%s", url, extra_headers)
+        log.debug("getting url: %s, extra_headers=%s", url, extra_headers)
         if extra_headers is None: extra_headers={}
         r = self.session.get(url, headers=extra_headers)
 
@@ -785,13 +834,13 @@ class JFS(object):
 #             f.write(r.content)
 
         if not r.ok:
-            logging.warning('HTTP GET failed: %s', r.text)
             o = lxml.objectify.fromstring(r.content)
             JFSError.raiseError(o, url)
         return r.content
 
     def get(self, url):
         'Make a GET request for url and return the response content as a generic lxml object'
+        url = self.escapeUrl(url)
         o = lxml.objectify.fromstring(self.raw(url))
         if o.tag == 'error':
             JFSError.raiseError(o, url)
@@ -806,7 +855,7 @@ class JFS(object):
             url = url_or_requests_response
             o = self.get(url)
 
-        parent = os.path.dirname(url).replace('up.jottacloud.com', 'www.jotta.no')
+        parent = os.path.dirname(url).replace('up.jottacloud.com', 'www.jottacloud.com')
         if o.tag == 'error':
             JFSError.raiseError(o, url)
         elif o.tag == 'device': return JFSDevice(o, jfs=self, parentpath=parent)
@@ -839,7 +888,7 @@ class JFS(object):
             # relative url
             url = self.rootpath + url
 
-        logging.debug('posting content (len %s) to url %s', len(content) if content is not None else '?', url)
+        log.debug('posting content (len %s) to url %s', len(content) if content is not None else '?', url)
         headers = self.session.headers.copy()
         headers.update(**extra_headers)
 
@@ -854,9 +903,10 @@ class JFS(object):
             headers['content-type'] = m.content_type
         else:
             m = content
+        url = self.escapeUrl(url)
         r = self.session.post(url, data=m, params=params, headers=headers)
         if not r.ok:
-            logging.warning('HTTP POST failed: %s', r.text)
+            log.warning('HTTP POST failed: %s', r.text)
             raise JFSError(r.reason)
         return self.getObject(r) # return a JFS* class
 
@@ -885,7 +935,7 @@ class JFS(object):
         Accept-Language: nb-NO,en,*
         Host: up.jottacloud.com
         """
-        url = path.replace('www.jotta.no', 'up.jottacloud.com')
+        url = path.replace('www.jottacloud.com', 'up.jottacloud.com')
         # Calculate file length
         fileobject.seek(0,2)
         contentlen = fileobject.tell()
@@ -897,7 +947,7 @@ class JFS(object):
         # Calculate file md5 hash
         md5hash = calculate_md5(fileobject)
 
-        logging.debug('posting content (len %s, hash %s) to url %s', contentlen, md5hash, url)
+        log.debug('posting content (len %s, hash %s) to url %s', contentlen, md5hash, url)
         now = datetime.datetime.now().isoformat()
         params = {'cphash': md5hash}
         m = requests_toolbelt.MultipartEncoder({
@@ -921,6 +971,16 @@ class JFS(object):
                  'created': ('', now),
                  'file': (os.path.basename(url), fileobject, 'application/octet-stream')}
         return self.post(url, None, files=files, params=params, extra_headers=headers, upload_callback=upload_callback)
+
+    def new_device(self, name, type):
+        """Create a new (backup) device on jottacloud. Types can be one of
+        ['workstation', 'imac', 'laptop', 'macbook', 'ipad', 'android', 'iphone', 'windows_phone']
+        """
+        # at least android client also includes a "cid" with is derived from the unique device id
+        # and encrypted with a public key in the apk.  The field appears to be optional
+        url = '%s' % posixpath.join(self.rootpath, name)
+        r = self.post(url, {'type': type})
+        return r
 
     # property overloading
     @property

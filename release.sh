@@ -23,23 +23,19 @@ function confirm {
 source bin/activate || err "couldnt activate virtualenv";
 VERSION=$(cat src/jottalib/__init__.py | cut -b14- | sed s/\'//) || err "couldnt get version";
 
-echo "RUNNING TESTS"
+echo "RUNNING TESTS FOR RELEASE v$VERSION"
 echo "=======================";
-py.test tests/
-tests/fusetest.sh
+PYTHONPATH=src py.test tests/ || err "Tests failed";
+tests/fusetest.sh || err "FUSE tests failed";
 
 
-confirm "Continue with release?" || exit 0;
+confirm "Continue with release of v$VERSION?" || exit 0;
 
 
 echo "RELEASE JOTTALIB AND JOTTACLOUDCLIENT VERSION $VERSION:"
 echo "=======================";
 printf "Uploading cheese to pypi";
-printf "... jottacloudclient";
-ln -sf setup-jottacloudclient.py setup.py;
-python setup.py sdist upload || err "jottacloudclient setup.py upload failed";
 printf "... jottalib ";
-ln -sf setup-jottalib.py setup.py;
 python setup.py sdist upload || err "jottalib setup.py upload failed";
 echo "=======================";
 echo "Creating git tag $VERSION and pushing it to git server";
@@ -52,6 +48,5 @@ echo "=======================";
 echo "Uploading docs to pypi";
 python setup.py upload_docs --upload-dir dist/docs/"$VERSION"/jottalib  || err "couldnt upload docs to pypi";
 echo "=======================";
-rm setup.py;
 echo "Enjoy your fresh $VERSION release!"
 

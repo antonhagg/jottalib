@@ -30,12 +30,9 @@ import pytest # pip install pytest
 # import jotta
 from jottalib import JFS, __version__, cli
 
-TESTFILEDATA="""
+TESTFILEDATA=u"""
 Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla est dolor, convallis fermentum sapien in, fringilla congue ligula. Fusce at justo ac felis vulputate laoreet vel at metus. Aenean justo lacus, porttitor dignissim imperdiet a, elementum cursus ligula. Vivamus eu est viverra, pretium arcu eget, imperdiet eros. Curabitur in bibendum."""
 
-
-def hack_sysargv(*newargs):
-    sys.argv = list(sys.argv[0], *newargs)
 
 
 def test_get_jotta_device():
@@ -50,29 +47,34 @@ def test_get_root_dir():
     assert isinstance(root, JFS.JFSMountPoint)
 
 def test_ls():
-    cli.ls()
-    hack_sysargv(['--all'])
-    cli.ls()
+    cli.ls([])
+    cli.ls(['--all'])
+    cli.ls(['--humanize'])
+    cli.ls(['--loglevel', 'info'])
 
 def test_mkdir():
-    hack_sysargv(['mkdir', 'testmkdir'])
-    cli.mkdir()
-
+    with pytest.raises(SystemExit):
+        cli.mkdir([]) # argparse should raise systemexit without the mandatory arguments
+    cli.mkdir(['testmkdir'])
+    cli.mkdir(['testmkdir', '--loglevel', 'info'])
 
 def test_monitor():
-    cli.monitor()
+    with pytest.raises(SystemExit):
+        cli.monitor([]) # argparse should raise systemexit without the mandatory arguments
+
 
 def test_scanner():
-    cli.scanner()
+    with pytest.raises(SystemExit):
+        cli.scanner([]) # argparse should raise systemexit without the mandatory arguments
 
 def test_fuse():
-    cli.fuse()
+    with pytest.raises(SystemExit):
+        cli.fuse([]) # argparse should raise systemexit without the mandatory arguments
 
 # TODO:
 
 # def parse_args_and_apply_logging_level(parser):
 # def print_size(num, humanize=False):
-# def fuse():
 # def upload():
 # def share():
 # def download():

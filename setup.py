@@ -37,7 +37,7 @@ package_version = '1'
 setup(name='jottalib',
       version='%s-%s' % (__version__, package_version),
       license='GPLv3',
-      description='A library to access the JottaCloud API',
+      description='A library and tools to access the JottaCloud API',
       long_description=long_desc,
       author=u'Håvard Gulldahl',
       author_email='havard@gulldahl.no',
@@ -51,6 +51,7 @@ setup(name='jottalib',
                         'python-dateutil',
                         'humanize',
                         'lxml',
+                        'six',
       ],
       # see https://pythonhosted.org/setuptools/setuptools.html#declaring-extras-optional-features-with-their-own-dependencies
       extras_require={
@@ -73,8 +74,7 @@ setup(name='jottalib',
               'jotta-monitor = jottalib.cli:monitor',
         ]
       },
-      classifiers="""
-Intended Audience :: Developers
+      classifiers="""Intended Audience :: Developers
 Intended Audience :: End Users/Desktop
 License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)
 Operating System :: OS Independent
@@ -87,6 +87,5 @@ Programming Language :: Python :: Implementation :: CPython
 Programming Language :: Python :: Implementation :: PyPy
 Topic :: System :: Archiving
 Topic :: System :: Archiving :: Backup
-Topic :: Utilities
-""".split('\n'),
+Topic :: Utilities""".split('\n'),
      )

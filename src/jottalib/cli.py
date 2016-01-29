@@ -22,7 +22,8 @@ from __future__ import absolute_import, division, unicode_literals
 __author__ = 'havard@gulldahl.no'
 
 import argparse
-import httplib
+import six
+from six.moves import http_client
 import humanize as _humanize
 import logging
 import os
@@ -70,11 +71,11 @@ def get_root_dir(jfs):
     return root_dir
 
 
-def parse_args_and_apply_logging_level(parser):
-    args = parser.parse_args()
+def parse_args_and_apply_logging_level(parser, argv):
+    args = parser.parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.loglevel.upper()))
     logging.captureWarnings(True)
-    httplib.HTTPConnection.debuglevel = 1 if args.loglevel == 'debug' else 0
+    http_client.HTTPConnection.debuglevel = 1 if args.loglevel == 'debug' else 0
     return args
 
 
@@ -88,7 +89,9 @@ def print_size(num, humanize=False):
 ## UTILITIES, ONE PER FUNCTION ##
 
 
-def fuse():
+def fuse(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     if not HAS_FUSE:
         message = ['jotta-fuse requires fusepy (pip install fusepy), install that and try again.']
         if os.name == 'nt':
@@ -111,10 +114,9 @@ def fuse():
     parser.add_argument('--debug-http', action='store_true', help='Show all HTTP traffic')
     parser.add_argument('--version', action='version', version=__version__)
     parser.add_argument('mountpoint', type=is_dir, help='A path to an existing directory where you want your JottaCloud tree mounted')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.debug_http:
-        import httplib
-        httplib.HTTPConnection.debuglevel = 1
+        http_client.HTTPConnection.debuglevel = 1
     if args.debug:
         requests_log = logging.getLogger("requests.packages.urllib3")
         requests_log.setLevel(logging.DEBUG)
@@ -126,7 +128,9 @@ def fuse():
                 sync_read=True, foreground=args.debug, raw_fi=False,
                 fsname="JottaCloudFS", subtype="fuse")
 
-def upload():
+def upload(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Upload a file to JottaCloud.')
     parser.add_argument('localfile', help='The local file that you want to upload',
                                      type=argparse.FileType('r'))
@@ -135,7 +139,7 @@ def upload():
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
     jfs = JFS.JFS()
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     progress_bar = ProgressBar()
     callback = lambda monitor, size: progress_bar.show(monitor.bytes_read, size)
     root_folder = get_root_dir(jfs)
@@ -145,37 +149,41 @@ def upload():
     else:
         target_dir = root_folder
     upload = target_dir.up(args.localfile, os.path.basename(args.localfile.name), upload_callback=callback)
-    print '%s uploaded successfully' % args.localfile.name
+    print('%s uploaded successfully' % args.localfile.name)
 
 
-def share():
+def share(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Share a file on JottaCloud and get the public URI.',
                                      epilog='Note: This utility needs to find JOTTACLOUD_USERNAME'
                                      ' and JOTTACLOUD_PASSWORD in the running environment.')
     parser.add_argument('localfile', help='The local file that you want to share',
                                      type=argparse.FileType('r'))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     jfs = JFS.JFS()
     jottadev = get_jotta_device(jfs)
     jottashare = jottadev.mountPoints['Shared']
     upload = jottashare.up(args.localfile)  # upload file
     public = upload.share() # share file
     for (filename, uuid, publicURI) in public.sharedFiles():
-        print '%s is now available to the world at %s' % (filename, publicURI)
+        print('%s is now available to the world at %s' % (filename, publicURI))
 
 
-def ls():
+def ls(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='List files in Jotta folder.', add_help=False)
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
     parser.add_argument('-h', '--humanize', help='Print human-readable file sizes.',
         action='store_true')
-    parser.add_argument('-a', '--all', help='Show all files, even deleted ones',
-        action='store_true')
+    parser.add_argument('-a', '--all', action='store_true',
+        help='Include deleted and incomplete files (otherwise ignored)')
     parser.add_argument('item', nargs='?', help='The file or directory to list. Defaults to the '
         'root dir')
     parser.add_argument('-H', '--help', help='Print this help', action='help')
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
     root_folder = get_root_dir(jfs)
     if args.item:
@@ -183,32 +191,36 @@ def ls():
         item = jfs.getObject(item_path)
     else:
         item = root_folder
+    timestamp_width = 25
     if isinstance(item, JFS.JFSFolder):
         files = [(
             f.created,
-            print_size(f.size, humanize=args.humanize),
-            'D' if f.deleted else ' ',
-            f.name) for f in item.files() if not f.deleted or args.all]
-        folders = [(' '*25, '', 'D' if f.deleted else ' ', str(f.name)) for f in item.folders()]
+            print_size(f.size, humanize=args.humanize) if f.size else u'',
+            u'D' if f.deleted else u'I' if f.state == 'INCOMPLETE' else u' ',
+            f.name) for f in item.files() if not f.deleted and f.state != 'INCOMPLETE' or args.all]
+        folders = [(u' '*timestamp_width, u'', u'D' if f.deleted else u' ', unicode(f.name))
+                   for f in item.folders() if not f.deleted or args.all]
         widest_size = 0
         for f in files:
             if len(f[1]) > widest_size:
                 widest_size = len(f[1])
         for item in sorted(files + folders, key=lambda t: t[3]):
             if args.all:
-                print '%s %s %s %s' % (item[0], item[1].rjust(widest_size), item[2], item[3])
+                print(u'%s %s %s %s' % (item[0], item[1].rjust(widest_size), item[2], item[3]))
             else:
-                print '%s %s %s' % (item[0], item[1].rjust(widest_size), item[3])
+                print(u'%s %s %s' % (item[0], item[1].rjust(widest_size), item[3]))
     else:
-        print ' '.join([str(item.created), print_size(item.size, humanize=args.humanize), item.name])
+        print(' '.join([str(item.created), print_size(item.size, humanize=args.humanize), item.name]))
 
 
-def download():
+def download(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Download a file from Jottacloud.')
     parser.add_argument('remotefile', help='The path to the file that you want to download')
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
     root_folder = get_root_dir(jfs)
     path_to_object = posixpath.join(root_folder.path, args.remotefile)
@@ -224,25 +236,29 @@ def download():
     print('%s downloaded successfully' % args.remotefile)
 
 
-def mkdir():
+def mkdir(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Create a new folder in Jottacloud.')
     parser.add_argument('newdir', help='The path to the folder that you want to create')
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
     root_folder = get_root_dir(jfs)
     root_folder.mkdir(args.newdir)
 
 
-def rm():
+def rm(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Delete an item from Jottacloud')
     parser.add_argument('file', help='The path to the item that you want to delete')
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
     parser.add_argument('-f', '--force', help='Completely deleted, no restore possiblity',
         action='store_true')
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
     root_dir = get_root_dir(jfs)
     item_path = posixpath.join(root_dir.path, args.file)
@@ -251,28 +267,35 @@ def rm():
         item.hard_delete()
     else:
         item.delete()
-    print '%s deleted' % args.file
+    print('%s deleted' % args.file)
 
 
-def restore():
+def restore(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Restore a deleted item from Jottacloud')
     parser.add_argument('file', help='The path to the item that you want to restore')
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
     root_dir = get_root_dir(jfs)
     item_path = posixpath.join(root_dir.path, args.file)
     item = jfs.getObject(item_path)
     item.restore()
-    print '%s restored' % args.file
+    print('%s restored' % args.file)
 
 
-def scanner():
+def scanner(argv=None):
+
+    if argv is None:
+        argv = sys.argv[1:]
+
     def is_dir(path):
         if not os.path.isdir(path):
             raise argparse.ArgumentTypeError('%s is not a valid directory' % path)
         return path
+
     parser = argparse.ArgumentParser(description=__doc__,
                                     epilog="""The program expects to find an entry for "jottacloud.com" in your .netrc,
                                     or JOTTACLOUD_USERNAME and JOTTACLOUD_PASSWORD in the running environment.
@@ -281,22 +304,35 @@ def scanner():
                         choices=('debug', 'info', 'warning', 'error'), default='warning')
     parser.add_argument('--errorfile', help='A file to write errors to', default='./jottacloudclient.log')
     parser.add_argument('--exclude', type=re.compile, action='append', help='Exclude paths matched by this pattern (can be repeated)')
+    parser.add_argument('--prune-files', dest='prune_files',
+                        help='Delete files that does not exist locally', action='store_true')
+    parser.add_argument('--prune-folders', dest='prune_folders',
+                        help='Delete folders that does not exist locally', action='store_true')
+    parser.add_argument('--prune-all', dest='prune_all',
+                        help='Combines --prune-files  and --prune-folders', action='store_true')
     parser.add_argument('--version', action='version', version=__version__)
     parser.add_argument('--dry-run', action='store_true',
                         help="don't actually do any uploads or deletes, just show what would be done")
     parser.add_argument('topdir', type=is_dir, help='Path to local dir that needs syncing')
     parser.add_argument('jottapath', help='The path at JottaCloud where the tree shall be synced (must exist)')
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
+    if args.prune_all:
+        args.prune_files = True
+        args.prune_folders = True
+
     fh = logging.FileHandler(args.errorfile)
     fh.setLevel(logging.ERROR)
     logging.getLogger('').addHandler(fh)
 
-    jfs = JFS()
+    jfs = JFS.JFS()
 
-    filescanner(args.topdir, args.jottapath, jfs, args.exclude, args.dry_run)
+    filescanner(args.topdir, args.jottapath, jfs, args.errorfile, args.exclude, args.dry_run, args.prune_files, args.prune_folders)
 
 
-def monitor():
+def monitor(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+
     if not HAS_WATCHDOG:
         message = ['jotta-monitor requires watchdog (pip install watchdog), install that and try again.']
         print(' '.join(message))
@@ -322,11 +358,11 @@ def monitor():
     parser.add_argument('topdir', type=is_dir, help='Path to local dir that needs syncing')
     parser.add_argument('mode', help='Mode of operation: ARCHIVE, SYNC or SHARE. See README.md',
                         choices=( 'archive', 'sync', 'share') )
-    args = parse_args_and_apply_logging_level(parser)
+    args = parse_args_and_apply_logging_level(parser, argv)
     fh = logging.FileHandler(args.errorfile)
     fh.setLevel(logging.ERROR)
     logging.getLogger('').addHandler(fh)
 
-    jfs = JFS()
+    jfs = JFS.JFS()
 
     filemonitor(args.topdir, args.mode, jfs)

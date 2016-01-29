@@ -22,12 +22,21 @@
 __author__ = 'havard@gulldahl.no'
 
 # import standardlib
-import os, StringIO, logging, tempfile, random, hashlib
+import os, logging, tempfile, random, hashlib
+try:
+    from io import StringIO # py3
+except ImportError:
+    from cStringIO import StringIO  # py2
 
 # import py.test
 import pytest # pip install pytest
 
-from xattr import xattr # pip install xattr
+try:
+    from xattr import xattr # pip install xattr
+    HAS_XATTR=True
+except ImportError: # no xattr installed, not critical because it is optional
+    HAS_XATTR=False
+
 
 # import jotta
 from jottalib import JFS, __version__, jottacloud
@@ -41,6 +50,8 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla est dolor, conval
 
 class TestXattr:
 
+    @pytest.mark.skipif(HAS_XATTR==False,
+                        reason="requires xattr")
     def test_setget(self):
         temp = tempfile.NamedTemporaryFile()
         temp.write(random.randint(0, 10)*TESTFILEDATA)

@@ -22,8 +22,11 @@
 __author__ = 'havard@gulldahl.no'
 
 # import standardlib
-import os, StringIO, logging, datetime
+import os, logging, datetime
 import tempfile, posixpath, urllib
+import six
+from six.moves import cStringIO as StringIO
+
 
 # import dependencies
 import lxml
@@ -39,13 +42,13 @@ from jottalib import JFS, __version__
 jfs = JFS.JFS() # get username and password from environment or .netrc
 
 
-TESTFILEDATA="""
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla est dolor, convallis fermentum sapien in, fringilla congue ligula. Fusce at justo ac felis vulputate laoreet vel at metus. Aenean justo lacus, porttitor dignissim imperdiet a, elementum cursus ligula. Vivamus eu est viverra, pretium arcu eget, imperdiet eros. Curabitur in bibendum."""
+TESTFILEDATA=b"""
+Lørem ipsum dolor sit amet, consectetur adipiscing elit. Nulla est dolor, convallis fermentum sapien in, fringilla congue ligula. Fusce at justo ac felis vulputate laoreet vel at metus. Aenean justo lacus, porttitor dignissim imperdiet a, elementum cursus ligula. Vivamus eu est viverra, pretium arcu eget, imperdiet eros. Curabitur in bibendum."""
 
 
 class TestJFS:
     def test_xml(self):
-        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 <user time="2015-09-12-T23:14:23Z" host="dn-093.site-000.jotta.no">
   <username>havardgulldahl</username>
@@ -107,7 +110,7 @@ class TestJFS:
 
     def test_up_and_delete(self):
         p = "/Jotta/Archive/testfile_up_and_delete.txt"
-        t = jfs.up(p, StringIO.StringIO(TESTFILEDATA))
+        t = jfs.up(p, six.BytesIO(TESTFILEDATA))
         assert isinstance(t, JFS.JFSFile)
         d = t.delete()
         assert isinstance(d, JFS.JFSFile)
@@ -115,7 +118,7 @@ class TestJFS:
 
     def test_up_and_read(self):
         p = "/Jotta/Archive/testfile_up_and_read.txt"
-        t = jfs.up(p, StringIO.StringIO(TESTFILEDATA))
+        t = jfs.up(p, six.BytesIO(TESTFILEDATA))
         f = jfs.getObject(p)
         assert isinstance(f, JFS.JFSFile)
         assert f.read() == TESTFILEDATA
@@ -124,7 +127,7 @@ class TestJFS:
     def test_up_and_readpartial(self):
         import random
         p = "/Jotta/Archive/testfile_up_and_readpartial.txt"
-        t = jfs.up(p, StringIO.StringIO(TESTFILEDATA))
+        t = jfs.up(p, six.BytesIO(TESTFILEDATA))
         f = jfs.getObject(p)
         # pick a number less than length of text
         start = random.randint(0, len(TESTFILEDATA))
@@ -135,8 +138,8 @@ class TestJFS:
 
     def test_stream(self):
         p = "/Jotta/Archive/testfile_up_and_stream.txt"
-        t = jfs.up(p, StringIO.StringIO(TESTFILEDATA))
-        s = "".join( [ chunk for chunk in t.stream() ] )
+        t = jfs.up(p, six.BytesIO(TESTFILEDATA))
+        s = b"".join( [ chunk for chunk in t.stream() ] )
         assert s == TESTFILEDATA
         t.delete()
 
@@ -158,7 +161,6 @@ class TestJFS:
         assert isinstance(jfs.getObject('/Jotta/Archive/test'), JFS.JFSFolder)
         #TODO: test with a python-requests object
 
-    @pytest.mark.xfail
     def test_urlencoded_filename(self):
         # make sure filenames that contain percent-encoded characters are
         # correctly parsed and the percent encoding is preserved
@@ -178,7 +180,10 @@ class TestJFS:
                 ]
         for f in tests:
             p = posixpath.join('/Jotta/Archive', f)
-            _f = tempfile.NamedTemporaryFile(prefix=f)
+            if six.PY2:
+                _f = tempfile.NamedTemporaryFile(mode='w+', prefix=f)
+            elif six.PY3:
+                _f = tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8', prefix=f)
             _f.write('123test')
             jfs_f = jfs.up(p, _f)
             clean_room_path = '%s%s%s%s' % (JFS.JFS_ROOT, jfs.username, '/Jotta/Archive/', f)
@@ -189,7 +194,7 @@ class TestJFS:
 class TestJFSDevice:
 
     def test_xml(self):
-        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 <device time="2015-09-12-T23:14:25Z" host="dn-093.site-000.jotta.no">
   <name xml:space="preserve">Jotta</name>
@@ -247,7 +252,7 @@ class TestJFSDevice:
 class TestJFSMountPoint:
 
     def test_xml(self):
-        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 <mountPoint time="2015-09-13-T00:16:31Z" host="dn-097.site-000.jotta.no">
   <name xml:space="preserve">Sync</name>
@@ -312,14 +317,14 @@ class TestJFSMountPoint:
         assert dev.path == jfs.rootpath + '/Jotta/Sync'
         assert dev.deleted == None
         assert dev.is_deleted() == False
-        assert all(isinstance(item, JFS.JFSFile) for item in dev.files())
+        assert all(isinstance(item, (JFS.JFSFile, JFS.JFSIncompleteFile)) for item in dev.files())
         assert all(isinstance(item, JFS.JFSFolder) for item in dev.folders())
         newf = dev.mkdir('testdir')
         assert isinstance(newf, JFS.JFSFolder)
         newf.delete()
 
         _f = tempfile.NamedTemporaryFile()
-        _f.write('123test')
+        _f.write(u'123test')
 
         newfile = dev.up(_f)
         assert isinstance(newfile, JFS.JFSFile)
@@ -333,7 +338,7 @@ class TestJFSMountPoint:
 class TestJFSFile:
 
     def test_xml(self):
-        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 <file name="testimage.jpg" uuid="9ebcfe1a-98b1-4e38-a73e-f498555da865" time="2015-09-13-T21:22:46Z" host="dn-094.site-000.jotta.no">
   <path xml:space="preserve">/havardgulldahl/Jotta/Archive</path>
@@ -421,11 +426,10 @@ class TestJFSFile:
         #test image stuff
         # image data
         JPEG = tempfile.NamedTemporaryFile(suffix='.jpg')
-        JPEG.write('\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xfe\x00>CREATOR: gd-jpeg v1.0 (using IJG JPEG v80), default quality\n\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xdb\x00C\x01\t\t\t\x0c\x0b\x0c\x18\r\r\x182!\x1c!22222222222222222222222222222222222222222222222222\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01"\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xc4\x00\xb5\x10\x00\x02\x01\x03\x03\x02\x04\x03\x05\x05\x04\x04\x00\x00\x01}\x01\x02\x03\x00\x04\x11\x05\x12!1A\x06\x13Qa\x07"q\x142\x81\x91\xa1\x08#B\xb1\xc1\x15R\xd1\xf0$3br\x82\t\n\x16\x17\x18\x19\x1a%&\'()*456789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x83\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94\x95\x96\x97\x98\x99\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xff\xc4\x00\x1f\x01\x00\x03\x01\x01\x01\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xc4\x00\xb5\x11\x00\x02\x01\x02\x04\x04\x03\x04\x07\x05\x04\x04\x00\x01\x02w\x00\x01\x02\x03\x11\x04\x05!1\x06\x12AQ\x07aq\x13"2\x81\x08\x14B\x91\xa1\xb1\xc1\t#3R\xf0\x15br\xd1\n\x16$4\xe1%\xf1\x17\x18\x19\x1a&\'()*56789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94\x95\x96\x97\x98\x99\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00?\x00\xf7\xfa(\xa2\x80?\xff\xd9')
+        JPEG.write(b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xfe\x00>CREATOR: gd-jpeg v1.0 (using IJG JPEG v80), default quality\n\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xdb\x00C\x01\t\t\t\x0c\x0b\x0c\x18\r\r\x182!\x1c!22222222222222222222222222222222222222222222222222\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01"\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xc4\x00\xb5\x10\x00\x02\x01\x03\x03\x02\x04\x03\x05\x05\x04\x04\x00\x00\x01}\x01\x02\x03\x00\x04\x11\x05\x12!1A\x06\x13Qa\x07"q\x142\x81\x91\xa1\x08#B\xb1\xc1\x15R\xd1\xf0$3br\x82\t\n\x16\x17\x18\x19\x1a%&\'()*456789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x83\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94\x95\x96\x97\x98\x99\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xff\xc4\x00\x1f\x01\x00\x03\x01\x01\x01\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xc4\x00\xb5\x11\x00\x02\x01\x02\x04\x04\x03\x04\x07\x05\x04\x04\x00\x01\x02w\x00\x01\x02\x03\x11\x04\x05!1\x06\x12AQ\x07aq\x13"2\x81\x08\x14B\x91\xa1\xb1\xc1\t#3R\xf0\x15br\xd1\n\x16$4\xe1%\xf1\x17\x18\x19\x1a&\'()*56789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94\x95\x96\x97\x98\x99\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00?\x00\xf7\xfa(\xa2\x80?\xff\xd9')
 
         folder = jfs.getObject('/Jotta/Archive')
         img = folder.up(JPEG)
-        print img.name
         assert img.is_image() == True
         assert img.thumb(size=JFS.JFSFile.BIGTHUMB) is not None
         assert img.thumb(size=JFS.JFSFile.XLTHUMB) is not None
@@ -435,6 +439,14 @@ class TestJFSFile:
         img.delete()
         #TODO: test file operations: .stream(), .rename(), .read(), .read_partial, .delete etc
         #TODO: test revisions
+
+    @pytest.mark.xfail # TODO: figure out the best API for writing unicode strings
+    def test_unicode_contents(self):
+        data = six.StringIO(u'123abcæøå')
+        p = "/Jotta/Archive/testfile_unicode_contents.txt"
+        t = jfs.up(p, data)
+        assert isinstance(JFSFile, t)
+        t.delete()
 
 class TestJFSFileDirList:
     'Tests for JFSFileDirList'
@@ -463,15 +475,213 @@ class TestJFSError:
             jfs.get('/Jotta/Archive/FileNot.found')
         with pytest.raises(JFS.JFSRangeError): # HTTP 416
             p = "/Jotta/Archive/testfile_up_and_readpartial.txt"
-            t = jfs.up(p, StringIO.StringIO(TESTFILEDATA))
+            t = jfs.up(p, six.BytesIO(TESTFILEDATA))
             f = jfs.getObject(p)
             f.readpartial(10, 3) # Range start index larger than end index;
             f.delete()
+        # TODO raise all errors. but how?
+
+
+class TestJFSFolder:
+    'Tests for folders'
+
+    def test_xml(self):
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+
+<folder name="test2" time="2015-09-28-T13:49:05Z" host="dn-091.site-000.jotta.no">
+  <path xml:space="preserve">/havardgulldahl/Jotta/Archive</path>
+  <abspath xml:space="preserve">/havardgulldahl/Jotta/Archive</abspath>
+  <folders>
+    <folder name="Documents"/>
+  </folders>
+  <files>
+    <file name="boink.txt~" uuid="c6684726-a842-4536-95b9-140584515dd1">
+      <currentRevision>
+        <number>1</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>40</size>
+        <md5>b924ebbc79ad414ded4af442ac7080d3</md5>
+        <updated>2014-11-23-T21:12:47Z</updated>
+      </currentRevision>
+    </file>
+    <file name="boink.txx~" uuid="1b243d8e-d6df-412c-a2ce-926ebaa73f47">
+      <currentRevision>
+        <number>1</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>40</size>
+        <md5>0c7652132733ead903dbdb942577fed7</md5>
+        <updated>2014-11-23-T21:27:21Z</updated>
+      </currentRevision>
+    </file>
+    <file name="boink.txy~" uuid="ba1ec941-8901-4eec-b797-bde9b6b1958c">
+      <currentRevision>
+        <number>1</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>40</size>
+        <md5>d32f37bf39041d9bb92ad45012e32cb9</md5>
+        <updated>2014-11-23-T21:05:11Z</updated>
+      </currentRevision>
+    </file>
+    <file name="boink.txz~" uuid="6724af96-e462-4862-b82a-00b7836a0681">
+      <currentRevision>
+        <number>1</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>9</size>
+        <md5>e3a2cba90ec7630bdf1d0566c8abb93e</md5>
+        <updated>2014-11-23-T21:03:25Z</updated>
+      </currentRevision>
+    </file>
+    <file name="dingdong" uuid="95c4bbcc-9a59-4669-b4cb-ee49c186ae1b">
+      <currentRevision>
+        <number>127</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>20480</size>
+        <md5>daa100df6e6711906b61c9ab5aa16032</md5>
+        <updated>2014-11-23-T22:56:30Z</updated>
+      </currentRevision>
+    </file>
+    <file name="fisk.txt" uuid="8b6db048-c44b-4656-8024-737a0c38c7ad">
+      <currentRevision>
+        <number>1</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>text/plain</mime>
+        <mstyle>TEXT_PLAIN</mstyle>
+        <size>18</size>
+        <md5>308285a59ae0a4a5ede4f7a0c08d2390</md5>
+        <updated>2014-11-23-T19:56:51Z</updated>
+      </currentRevision>
+    </file>
+    <file name="nyboink.txt" uuid="3d0a0a28-4c68-4e6a-8414-fa5c37ec45cb">
+      <currentRevision>
+        <number>26</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>text/plain</mime>
+        <mstyle>TEXT_PLAIN</mstyle>
+        <size>6</size>
+        <md5>6882bf1ef7f4d938a4cf2931d6953fa1</md5>
+        <updated>2014-11-23-T21:28:55Z</updated>
+      </currentRevision>
+    </file>
+    <file name="oo.txt" uuid="691aa9b6-eec1-4564-803e-6288dc57aa37">
+      <currentRevision>
+        <number>3</number>
+        <state>COMPLETED</state>
+        <created>2014-12-18-T21:23:48Z</created>
+        <modified>2014-12-18-T21:23:48Z</modified>
+        <mime>text/plain</mime>
+        <mstyle>TEXT_PLAIN</mstyle>
+        <size>4</size>
+        <md5>aa3f5bb8c988fa9b75a1cdb1dc4d93fc</md5>
+        <updated>2014-12-18-T21:23:48Z</updated>
+      </currentRevision>
+    </file>
+    <file name="pingpong.data" uuid="f02f1ca1-c6a4-403d-b344-f4e3417d92fd">
+      <currentRevision>
+        <number>165</number>
+        <state>COMPLETED</state>
+        <created>2014-12-18-T21:20:32Z</created>
+        <modified>2014-12-18-T21:20:32Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>9216</size>
+        <md5>ec041186ebff92a26ab3ef2dd34dd0e7</md5>
+        <updated>2014-12-18-T21:20:32Z</updated>
+      </currentRevision>
+    </file>
+    <file name="testfs" uuid="a00034dd-971c-4699-8ee0-e7514045770e">
+      <currentRevision>
+        <number>2</number>
+        <state>COMPLETED</state>
+        <created>2014-10-05-T10:23:18Z</created>
+        <modified>2014-10-05-T10:23:18Z</modified>
+        <mime>application/octet-stream</mime>
+        <mstyle>APPLICATION_OCTET_STREAM</mstyle>
+        <size>0</size>
+        <md5>d41d8cd98f00b204e9800998ecf8427e</md5>
+        <updated>2014-11-23-T19:41:03Z</updated>
+      </currentRevision>
+    </file>
+  </files>
+  <metadata first="" max="" total="11" num_folders="1" num_files="10"/>
+</folder>
+"""
+        o = lxml.objectify.fromstring(xml)
+        dev = JFS.JFSFolder(o, jfs, parentpath=jfs.rootpath + '/Jotta/Archive')
+        dev.synced = True # make sure our tests are based on the xml above, and not live
+
+        #test native properties
+        assert dev.path == jfs.rootpath + '/Jotta/Archive/test2'
+        assert dev.name == 'test2'
+        assert dev.deleted == None
+        assert dev.is_deleted() == False
+
+        #test convenience methods
+        assert len(list(dev.folders())) == 1
+        assert len(list(dev.files())) == 10
+        assert all(isinstance(item, JFS.JFSFile) for item in dev.files())
+        assert all(isinstance(item, JFS.JFSFolder) for item in dev.folders())
+
+
+    @pytest.mark.xfail  # TODO: restore this when bug #74 is squashed
+    def test_delete_and_restore():
+        # testing jottacloud delete and restore
+        dev = jfs.getObject('/Jotta/Sync')
+        newf = dev.mkdir('testdir')
+        assert isinstance(newf, JFS.JFSFolder)
+        oldf = newf.delete()
+        assert isinstance(oldf, JFS.JFSFolder)
+        assert oldf.is_deleted() == True
+        assert isinstance(oldf.deleted, datetime.datetime)
+        restoredf = oldf.restore()
+        assert isinstance(restoredf, JFS.JFSFolder)
+        assert restoredf.is_deleted() == False
+        purgedf = restoredf.hard_delete()
+
+
+        _f = tempfile.NamedTemporaryFile()
+        _f.write('123test')
+
+        newfile = dev.up(_f)
+        assert isinstance(newfile, JFS.JFSFile)
+        newfile.delete()
+        newfile = dev.up(_f, filename='heyhei123.txt')
+        assert isinstance(newfile, JFS.JFSFile)
+        assert newfile.name == 'heyhei123.txt'
+        newfile.delete()
+        assert isinstance(dev.filedirlist(), JFS.JFSFileDirList)
+
+
+
+
+
 
 
 """
 TODO
-class JFSFolder(object):
 class JFSIncompleteFile(ProtoFile):
 class JFSenableSharing(object):
 """
