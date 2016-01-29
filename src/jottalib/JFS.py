@@ -176,7 +176,7 @@ class JFSFileDirList(object):
                         # an incomplete file
                         t.append(treefile(unicode(file_.attrib['name']),
                                           -1, # incomplete files have no size
-                                          unicode(file_.latestRevision.md5),
+                                          unicode(""), # incomplete files have no md5
                                           unicode(file_.attrib['uuid'])
                                           )
                                  )
@@ -839,9 +839,20 @@ class JFS(object):
         return r.content
 
     def get(self, url):
-        'Make a GET request for url and return the response content as a generic lxml object'
+        'Make a GET request for url and return the response content as a generic lxml object'    
+        url = url.encode(encoding='UTF-8')
         url = self.escapeUrl(url)
-        o = lxml.objectify.fromstring(self.raw(url))
+        if "?mode=list" in url: #Check if we are requested a full tree of the directory
+            if os.path.exists('temp.xml'):
+                os.remove('temp.xml') 
+            with open("temp.xml", "w") as text_file:
+                text_file.write(self.raw(url))
+            o = lxml.objectify.parse("temp.xml")
+            o = o.getroot()
+            #if os.path.exists('temp.xml'):
+            #   os.remove('temp.xml') 
+        else:
+            o = lxml.objectify.fromstring(self.raw(url))
         if o.tag == 'error':
             JFSError.raiseError(o, url)
         return o

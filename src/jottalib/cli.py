@@ -52,8 +52,11 @@ try:
 except ImportError:
     pass
 
-ProgressBar = partial(progress.Bar, empty_char='○', filled_char='●')
 
+if sys.platform =='win32':
+    ProgressBar = partial(progress.Bar)
+else:
+    ProgressBar = partial(progress.Bar, empty_char='○', filled_char='●')
 
 ## HELPER FUNCTIONS ##
 
@@ -216,26 +219,116 @@ def ls(argv=None):
 def download(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    parser = argparse.ArgumentParser(description='Download a file from Jottacloud.')
-    parser.add_argument('remotefile', help='The path to the file that you want to download')
+    parser = argparse.ArgumentParser(description='Download a file or folder from Jottacloud.')
+    parser.add_argument('remoteobject', help='The path to the file or folder that you want to download')
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
         choices=('debug', 'info', 'warning', 'error'), default='warning')
+    parser.add_argument('-c', '--checksum', help='Verify checksum of file after download', action='store_true' )
+    parser.add_argument('-v', '--verbose', help='Increase output verbosity', action='store_true' )
     args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
     root_folder = get_root_dir(jfs)
-    path_to_object = posixpath.join(root_folder.path, args.remotefile)
-    remote_file = jfs.getObject(path_to_object)
-    total_size = remote_file.size
-    with open(remote_file.name, 'wb') as fh:
-        bytes_read = 0
-        with ProgressBar(expected_size=total_size) as bar:
-            for chunk_num, chunk in enumerate(remote_file.stream()):
-                fh.write(chunk)
-                bytes_read += len(chunk)
-                bar.show(bytes_read)
-    print('%s downloaded successfully' % args.remotefile)
+    path_to_object = posixpath.join(root_folder.path, args.remoteobject)
+    if args.verbose:
+        print('Root folder path: %s' % root_folder.path)
+        print('Object that is downloaded: %s' % args.remoteobject)
+        print('Absolute path to object: %s' % path_to_object)
+    remote_object = jfs.getObject(path_to_object)
+    if hasattr(remote_object, 'size'): #Check if it's a file that is downloaded by checking if the attribute 'size' exist
+        remote_file = remote_object
+        total_size = remote_file.size
+        if total_size == -1: # Indicates an incomplete file
+            print('%s was NOT downloaded successfully - Incomplete file' % remote_file.name)
+            exit(1)
+        with open(remote_file.name, 'wb') as fh:
+            bytes_read = 0
+            with ProgressBar(expected_size=total_size, label='Downloading: %s, Size:%s' % (remote_file.name, print_size(total_size, True))) as bar:
+                for chunk_num, chunk in enumerate(remote_file.stream()):
+                    fh.write(chunk)
+                    bytes_read += len(chunk)
+                    bar.show(bytes_read)
+        if args.checksum:
+            md5_lf = JFS.calculate_md5(open(remote_file.name, 'rb'))
+            md5_jf = remote_file.md5
+            if md5_lf != md5_jf:
+                print('%s - Checksum for downloaded file' % md5_lf)
+                print('%s - Checksum for server file' % md5_jf)
+                print('%s was NOT downloaded successfully - cheksum mismatch' % remote_file.name)
+                exit(1)
+            if args.verbose:
+                print('%s - Checksum for downloaded file' % md5_lf)
+                print('%s - Checksum for server file' % md5_jf)
+            print('%s was downloaded successfully - checksum  matched' % remote_file.name)
+            exit(1)
+        print('%s downloaded successfully - checksum not checked' % remote_file.name)
+    else: #if it's not a file it has to be a folder
+        incomplete_files = [] #Create an list where we can store incomplete files
+        checksum_error_files = [] #Create an list where we can store checksum error files
+        if args.verbose:
+            print "It's a folder that is downloaded - getting the folder and file structure. This might take a while if the tree is big..."     
+        fileTree = remote_object.filedirlist().tree #Download the folder tree
+        if args.verbose:
+            print('Total number of folders to download: %d' % len(fileTree))
+        char_in_path_to_object = (posixpath.split(path_to_object)[0]) #Characters up to the folder that we want to download
+        for folder in fileTree:
+            rel_path_to_object = folder.lstrip(char_in_path_to_object)
+            if not os.path.exists(rel_path_to_object): #Create the folder locally if it doesn't exist
+                os.makedirs(rel_path_to_object)
+            if args.verbose:
+                print('Entering a new folder: %s' % rel_path_to_object)
+            for _file in fileTree[folder]: #Enter the folder and download the files within
+                abs_path_to_object = posixpath.join(root_folder.path, posixpath.join(rel_path_to_object, _file[0])) #This is the absolute path to the file that is going to be downloaded
+                if args.verbose:
+                    print('Downloading the file from: %s' % abs_path_to_object)
+                remote_object = jfs.getObject(abs_path_to_object)
+                remote_file = remote_object
+                total_size = remote_file.size
+                if args.verbose:
+                    print('Downloading the file to: %s' % posixpath.join(rel_path_to_object,remote_file.name))
+                if total_size == -1: # Indicates an incomplete file
+                    print('%s was NOT downloaded successfully - Incomplete file' % remote_file.name)
+                    incomplete_files.append(posixpath.join(rel_path_to_object,remote_file.name)) 
+                else:
+                    with open(posixpath.join(rel_path_to_object,remote_file.name), 'wb') as fh:
+                        bytes_read = 0
+                        with ProgressBar(expected_size=total_size, label='Downloading: %s, Size:%s' % (remote_file.name, print_size(total_size, True))) as bar:
+                            for chunk_num, chunk in enumerate(remote_file.stream()):
+                                fh.write(chunk)
+                                bytes_read += len(chunk)
+                                bar.show(bytes_read)
+                    if args.checksum:
+                        md5_lf = JFS.calculate_md5(open(posixpath.join(rel_path_to_object,remote_file.name), 'rb'))
+                        md5_jf = remote_file.md5
+                        if md5_lf != md5_jf:
+                            print('%s - Checksum for downloaded file' % md5_lf)
+                            print('%s - Checksum for server file' % md5_jf)
+                            print('%s was NOT downloaded successfully - cheksum mismatch' % remote_file.name)
+                            checksum_error_files.append(posixpath.join(rel_path_to_object,remote_file.name))
+                        else:
+                            if args.verbose:
+                                print('%s - Checksum for downloaded file' % md5_lf)
+                                print('%s - Checksum for server file' % md5_jf)
+                            print('%s was downloaded successfully - checksum  matched' % remote_file.name)
+                    else:    
+                        print('%s downloaded successfully - checksum not checked' % remote_file.name)
+        #Incomplete files
+        if len(incomplete_files)> 0:
+            with open("incomplete_files.txt", "w") as text_file:
+                    text_file.write(incomplete_files)        
+        print('Incomplete files (not downloaded): %d' % len(incomplete_files))
+        if args.verbose:
+            for _files in incomplete_files:
+                print _files
+        #Checksum error files
+        if len(checksum_error_files)> 0:
+            with open("checksum_error_files.txt", "w") as text_file:
+                    text_file.write(checksum_error_files)
+        print('Files with checksum error (not downloaded): %d' % len(checksum_error_files))
+        if args.verbose:
+            for _files in checksum_error_files:
+                print _files
 
-
+                
 def mkdir(argv=None):
     if argv is None:
         argv = sys.argv[1:]
