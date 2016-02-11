@@ -33,6 +33,7 @@ import time
 import re
 from clint.textui import progress
 from functools import partial
+import codecs
 
 # import our stuff
 from jottalib import JFS, __version__
@@ -59,17 +60,17 @@ else:
 
 ## HELPER FUNCTIONS ##
 
-def get_jotta_device(jfs):
+def get_jotta_device(jfs,device='Jotta'): #Default device is Jotta but can be changed
     jottadev = None
-    for j in jfs.devices: # find Jotta/Shared folder
-        if j.name == 'Jotta':
+    for j in jfs.devices: # Find the device
+        if j.name == device:
             jottadev = j
     return jottadev
 
 
-def get_root_dir(jfs):
-    jottadev = get_jotta_device(jfs)
-    root_dir = jottadev.mountPoints['Sync']
+def get_root_dir(jfs,device='Jotta',mountpoint='Sync'): #Default device is Jotta and mountpoint is Sync but can be changed
+    jottadev = get_jotta_device(jfs,device)
+    root_dir = jottadev.mountPoints[mountpoint]
     return root_dir
 
 
@@ -220,18 +221,50 @@ def download(argv=None):
         argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description='Download a file or folder from Jottacloud.')
     parser.add_argument('remoteobject', help='The path to the file or folder that you want to download')
+    parser.add_argument('-m', '--mode',
+                        help='Mode of operation(decides where the default root should be): DEVICE - Root is above device level (need to specify both Device and Mountpoint in front of the folder i.e. DEVICENAME/mountpoint/folder), ARCHIVE - root is in the archive mountpoint, SYNC - root is in sync mountpoint, Default: %(default)s.',
+                        choices=( 'device', 'archive', 'sync'), default='sync')
     parser.add_argument('-l', '--loglevel', help='Logging level. Default: %(default)s.',
-        choices=('debug', 'info', 'warning', 'error'), default='warning')
+                        choices=('debug', 'info', 'warning', 'error'), default='warning')
     parser.add_argument('-c', '--checksum', help='Verify checksum of file after download', action='store_true' )
     parser.add_argument('-r', '--resume', help='Will not download the files again if it exist in path', action='store_true' )
     parser.add_argument('-v', '--verbose', help='Increase output verbosity', action='store_true' )
     args = parse_args_and_apply_logging_level(parser, argv)
     jfs = JFS.JFS()
-    root_folder = get_root_dir(jfs)
+    
+    if args.mode == 'sync':      #Device is Jotta and mountpoint is Sync
+        device = 'Jotta'
+        mountpoint = 'Sync'
+        print('Device is: %s' % device)
+        print('Mountpoint is: %s' % mountpoint)
+        root_folder = get_root_dir(jfs,device,mountpoint)
+    elif args.mode == 'archive': #Device is Jotta and mountpoint is Archive
+        device = 'Jotta'
+        mountpoint = 'Archive'
+        print('Device is: %s' % device)
+        print('Mountpoint is: %s' % mountpoint)
+        root_folder = get_root_dir(jfs,device,mountpoint)
+    elif args.mode == 'device':  #Need to get the Device from first part of path and mountpoint from second part
+        path_in_parts = os.path.normpath(args.remoteobject).split(os.sep)
+        device = path_in_parts[0]
+        mountpoint = path_in_parts[1]
+        print('Device is: %s' % device)
+        print('Mountpoint is: %s' % mountpoint)
+        if len(path_in_parts)<3:
+            print('You need to specify at least one folder of file in addition to the device and mountpoint (i.e. 3 levels)')
+            exit(1)
+        else:
+            root_folder = get_root_dir(jfs,device,mountpoint)
+            del path_in_parts[0:2] #Removing device and mountpoint from path
+            args.remoteobject = "/".join(path_in_parts)
+    else:
+        exit(1)#This shouldn't really be necessary
+        
     path_to_object = posixpath.join(root_folder.path, args.remoteobject)
+
     if args.verbose:
         print('Root folder path: %s' % root_folder.path)
-        print('Object that is downloaded: %s' % args.remoteobject)
+        print('Relative path to object: %s' % args.remoteobject)
         print('Absolute path to object: %s' % path_to_object)
     remote_object = jfs.getObject(path_to_object)
     if hasattr(remote_object, 'size'): #Check if it's a file that is downloaded by checking if the attribute 'size' exist
@@ -261,19 +294,23 @@ def download(argv=None):
             print('%s was downloaded successfully - checksum  matched' % remote_file.name)
             exit(1)
         print('%s downloaded successfully - checksum not checked' % remote_file.name)
+
+
     else: #if it's not a file it has to be a folder
         incomplete_files = [] #Create an list where we can store incomplete files
         checksum_error_files = [] #Create an list where we can store checksum error files
-        zero_files = []
-        long_path = []
+        zero_files = [] #Create an list where we can store zero files
+        long_path = [] #Create an list where we can store skipped files and folders because of long path
         if args.verbose:
             print "It's a folder that is downloaded - getting the folder and file structure. This might take a while if the tree is big..."     
         fileTree = remote_object.filedirlist().tree #Download the folder tree
         if args.verbose:
             print('Total number of folders to download: %d' % len(fileTree))
-        char_in_path_to_object = (posixpath.split(path_to_object)[0]) #Characters up to the folder that we want to download
+
+        #Iterate through each folder
         for folder in fileTree:
-            rel_path_to_object = folder.lstrip(char_in_path_to_object)
+            #We need to strip the path to the folder path from account,device and mountpoint details      
+            rel_path_to_object = folder[len(jfs.username)+len(device)+len(mountpoint)+4:] 
 
             if len(rel_path_to_object) > 250: #Windows has a limit of 250 characters in path
                 print('%s was NOT downloaded successfully - path to long' % rel_path_to_object)
@@ -325,7 +362,7 @@ def download(argv=None):
                                             for chunk_num, chunk in enumerate(remote_file.stream()):
                                                 fh.write(chunk)
                                                 bytes_read += len(chunk)
-                                                bar.show(bytes_read)    
+                                                bar.show(bytes_read)
                                 if args.checksum:
                                     md5_lf = JFS.calculate_md5(open(posixpath.join(rel_path_to_object,remote_file.name), 'rb'))
                                     md5_jf = remote_file.md5
