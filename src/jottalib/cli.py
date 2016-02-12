@@ -326,7 +326,7 @@ def download(argv=None):
                         print('Downloading the file from: %s' % abs_path_to_object)
                     remote_object = jfs.getObject(abs_path_to_object)
                     remote_file = remote_object
-                    if not hasattr(remote_file, 'size'):
+                    if _file[1]==-1 or not hasattr(remote_file, 'size'):
                         print('%s was NOT downloaded successfully - Incomplete file' % remote_file.name)
                         incomplete_files.append(posixpath.join(rel_path_to_object,remote_file.name))
                     else:
