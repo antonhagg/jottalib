@@ -165,7 +165,7 @@ class JFSFileDirList(object):
             t = []
             if hasattr(folder, 'files'):
                 for file_ in folder.files.iterchildren():
-                    if hasattr(file_, 'currentRevision'): # a normal file
+                    if hasattr(file_, 'currentRevision') and file_.currentRevision.state == 'COMPLETED': # a normal file
                         t.append(treefile(unicode(file_.attrib['name']),
                                           int(file_.currentRevision.size),
                                           unicode(file_.currentRevision.md5),
@@ -173,10 +173,14 @@ class JFSFileDirList(object):
                                           )
                                  )
                     else:
-                        # an incomplete file
+                        # Known file states that will be passed here 
+                        #<state>CORRUPT</state>
+                        #<state>INCOMPLETE</state>
+                        #<state>ADDED</state>
+                        #<state>PROCESSING</state>
                         t.append(treefile(unicode(file_.attrib['name']),
-                                          -1, # incomplete files have no size
-                                          unicode(""), # incomplete files have no md5
+                                          -1, # incomplete or corrupt files have no size
+                                          unicode(""), # some incomplete files have no md5
                                           unicode(file_.attrib['uuid'])
                                           )
                                  )
@@ -781,6 +785,7 @@ class JFS(object):
         from requests.auth import HTTPBasicAuth
         self.apiversion = '2.2' # hard coded per october 2014
         self.session = requests.Session() # create a session for connection pooling, ssl keepalives and cookie jar
+        self.session.mount('https://',requests.adapters.HTTPAdapter(max_retries=10))
         self.session.stream = True
         if not auth:
             auth = get_auth_info()
@@ -827,7 +832,7 @@ class JFS(object):
             url = self.rootpath + url
         log.debug("getting url: %s, extra_headers=%s", url, extra_headers)
         if extra_headers is None: extra_headers={}
-        r = self.session.get(url, headers=extra_headers)
+        r = self.session.get(url, headers=extra_headers, timeout=1800) #max retries is set in __init__
 
         if r.status_code in ( 500, ):
             raise JFSError(r.reason)

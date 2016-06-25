@@ -324,17 +324,14 @@ def download(argv=None):
                     abs_path_to_object = posixpath.join(root_folder.path, posixpath.join(rel_path_to_object, _file[0])) #This is the absolute path to the file that is going to be downloaded
                     if args.verbose:
                         print('Downloading the file from: %s' % abs_path_to_object)
-                    remote_object = jfs.getObject(abs_path_to_object)
-                    remote_file = remote_object
-                    if _file[1]==-1 or not hasattr(remote_file, 'size'):
-                        print('%s was NOT downloaded successfully - Incomplete file' % remote_file.name)
-                        incomplete_files.append(posixpath.join(rel_path_to_object,remote_file.name))
+                    if _file[1]==-1: #Corrupt and incomplete files will be skipped 
+                        print('%s was NOT downloaded successfully - Incomplete or corrupt file' % _file[0])
+                        incomplete_files.append(posixpath.join(rel_path_to_object,_file[0]))
                     else:
+                        remote_object = jfs.getObject(abs_path_to_object)
+                        remote_file = remote_object
                         total_size = remote_file.size
-                        if total_size == -1: # Indicates an incomplete file
-                            print('%s was NOT downloaded successfully - Incomplete file' % remote_file.name)
-                            incomplete_files.append(posixpath.join(rel_path_to_object,remote_file.name)) 
-                        elif total_size == 0: # Indicates an zero file
+                        if total_size == 0: # Indicates an zero file
                             print('%s was NOT downloaded successfully - zero file' % remote_file.name)
                             zero_files.append(posixpath.join(rel_path_to_object,remote_file.name)) 
                         else:
